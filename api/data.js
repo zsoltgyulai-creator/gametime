@@ -41,9 +41,8 @@ export default async function handler(req, res) {
         const start = Number(p.active.start);
         const safetyEnd = start + 6 * 60 * 60 * 1000;
         const usedBefore = (p.sessions || []).reduce((n,s)=>n+duration(s),0);
-        const limitEnd = start + Math.max(0, Number(state.limit || 150) * 60 * 1000 - usedBefore * 1000);
-        const end = Math.min(now, safetyEnd, limitEnd);
-        if (now >= safetyEnd || now >= limitEnd) {
+        const end = Math.min(now, safetyEnd);
+        if (now >= safetyEnd) {
           if (end > start) p.sessions.push({ start, end });
           p.active = null;
           autoClosed = true;
@@ -78,15 +77,20 @@ export default async function handler(req, res) {
       if (!Number.isFinite(limit) || limit < 1 || limit > 1440) return res.status(400).json({ error: 'A keret 1 és 1440 perc között lehet' });
       state.limit = limit;
     } else if (action === 'adjust') {
-      const minutes = Math.floor(Number(body.minutes));
-      if (!CHILDREN.includes(body.child) || !Number.isFinite(minutes) || minutes < 1 || minutes > 1440) return res.status(400).json({ error: 'Hibás korrekció' });
+      const minutes = Math.trunc(Number(body.minutes));
+      if (!CHILDREN.includes(body.child) || !Number.isFinite(minutes) || minutes === 0 || Math.abs(minutes) > 1440) return res.status(400).json({ error: 'Hibás korrekció' });
       const p = ensureDay(state, body.child, body.date || dayKey());
       if (p.active) { p.sessions.push({ start:p.active.start, end:Date.now() }); p.active = null; }
-      let left = minutes * 60;
-      for (let i = p.sessions.length - 1; i >= 0 && left > 0; i--) {
-        const s = p.sessions[i], cut = Math.min(duration(s), left);
-        s.end -= cut * 1000; left -= cut;
-        if (duration(s) <= 0) p.sessions.splice(i,1);
+      if (minutes < 0) {
+        const now = Date.now(), added = Math.abs(minutes) * 60000;
+        p.sessions.push({ start: now - added, end: now });
+      } else {
+        let left = minutes * 60;
+        for (let i = p.sessions.length - 1; i >= 0 && left > 0; i--) {
+          const s = p.sessions[i], cut = Math.min(duration(s), left);
+          s.end -= cut * 1000; left -= cut;
+          if (duration(s) <= 0) p.sessions.splice(i,1);
+        }
       }
     } else if (action === 'editSession') {
       if (!CHILDREN.includes(body.child) || !/^\d{4}-\d{2}-\d{2}$/.test(body.date || '') || !Number.isFinite(Number(body.start)) || !Number.isFinite(Number(body.minutes)) || Number(body.minutes)<1 || Number(body.minutes)>1440) return res.status(400).json({ error:'Hibás alkalom-módosítás' });
@@ -108,7 +112,7 @@ export default async function handler(req, res) {
     const { error: writeError } = await supabase.from('gametime_state').upsert({ id:1, state, updated_at:new Date().toISOString() });
     if (writeError) throw writeError;
     if (['setLimit','adjust','reset'].includes(action)) {
-      const logEntry = { action, child: action === 'setLimit' ? null : body.child, minutes: action === 'adjust' ? Math.floor(Number(body.minutes)) : null, old_limit: action === 'setLimit' ? oldLimit : null, new_limit: action === 'setLimit' ? Number(state.limit) : null };
+      const logEntry = { action, child: action === 'setLimit' ? null : body.child, minutes: action === 'adjust' ? Math.trunc(Number(body.minutes)) : null, old_limit: action === 'setLimit' ? oldLimit : null, new_limit: action === 'setLimit' ? Number(state.limit) : null };
       const { error: auditError } = await supabase.from('gametime_audit_log').insert(logEntry);
       if (auditError) throw auditError;
     }
