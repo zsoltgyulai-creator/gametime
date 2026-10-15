@@ -61,6 +61,10 @@ export default async function handler(req, res) {
       if (logError) throw logError;
       return res.status(200).json({ logs: logs || [] });
     }
+    if (action === 'verifyPin') {
+      if (req.headers['x-parent-pin'] !== process.env.PARENT_PIN) return res.status(403).json({ error: 'Hibás szülői PIN' });
+      return res.status(200).json({ ok: true });
+    }
     if (['setLimit','adjust','reset','editSession','deleteSession'].includes(action) && req.headers['x-parent-pin'] !== process.env.PARENT_PIN) {
       return res.status(403).json({ error: 'Szülői PIN szükséges' });
     }
